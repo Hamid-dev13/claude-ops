@@ -1,0 +1,32 @@
+# Gabarit — copier vers /etc/claude-ops/services.allow et adapter.
+#
+# Un nom de conteneur par ligne. Comparaison stricte : pas de joker,
+# pas de correspondance par préfixe.
+#
+# Lister les conteneurs disponibles :
+#   docker ps --format '{{.Names}}'
+
+# --- À inclure : applications dont les logs servent au diagnostic ---
+mon-app-frontend
+mon-app-api
+mon-site-vitrine
+
+# --- À EXCLURE par défaut ----------------------------------------------------
+#
+# Bases de données — les logs contiennent requêtes et données personnelles :
+#   postgres, mysql, mongo, *-db
+#
+# Reverse-proxies — en-têtes HTTP complets : cookies de session, jetons d'auth.
+# C'est souvent l'endroit le plus risqué du serveur :
+#   traefik, nginx, caddy, haproxy
+#
+# Outils d'administration de bases — identifiants exposés :
+#   adminer, phpmyadmin, pgadmin
+#
+# Plateformes de déploiement — journaux contenant les variables
+# d'environnement, donc les secrets applicatifs :
+#   coolify, dokku, portainer
+#
+# Cas à arbitrer explicitement :
+#   outils d'automatisation (n8n, zapier-like) : clés d'API tierces dans les logs
+#   analytics : adresses IP et navigation des visiteurs — implications RGPD

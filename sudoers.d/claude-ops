@@ -1,0 +1,62 @@
+# /etc/sudoers.d/claude-ops
+#
+# Droits root accordés à l'agent. C'est le fichier le plus sensible du projet.
+#
+# INSTALLATION — jamais avec un éditeur classique :
+#   sudo install -m 0440 -o root -g root sudoers.d/claude-ops /etc/sudoers.d/claude-ops
+#   sudo visudo -c -f /etc/sudoers.d/claude-ops
+#
+# Une erreur de syntaxe ici peut casser sudo pour TOUS les utilisateurs.
+# `visudo -c` valide sans appliquer : ne jamais sauter cette étape.
+
+# --- Journalisation ----------------------------------------------------------
+# Toute commande de l'agent est tracée, avec ses arguments (menace M4 :
+# reconstitution après incident).
+#
+# On conserve volontairement syslog EN PLUS du fichier dédié : un journal
+# local peut être altéré, un journal syslog est souvent centralisé ailleurs.
+Defaults:claude-ops log_output
+Defaults:claude-ops logfile="/var/log/claude-ops.log"
+
+# PATH imposé côté sudo, en complément de celui figé dans ops-lib.sh.
+# Défense en profondeur : l'agent ne doit pas pouvoir substituer un binaire.
+Defaults:claude-ops secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# L'agent n'a pas de TTY interactif. On refuse explicitement l'élévation
+# d'environnement, qui est un vecteur d'évasion classique.
+#
+# Attention à la syntaxe : le « ! » de négation doit être séparé du nom
+# d'utilisateur par une espace. « Defaults:claude-ops!setenv » est une
+# erreur de syntaxe qui fait échouer tout le fichier.
+Defaults:claude-ops !setenv
+Defaults:claude-ops env_reset
+
+# --- Commandes autorisées (v1 : lecture seule) -------------------------------
+#
+# POURQUOI DES CHEMINS ABSOLUS, ET AUCUN JOKER SUR LE CHEMIN
+#
+# Une entrée du type   /usr/local/bin/ops-*   serait une faille béante :
+# le joker porterait sur le NOM du binaire, et tout fichier créé plus tard
+# dans ce répertoire deviendrait exécutable en root.
+# Chaque commande est donc énumérée nominativement.
+#
+# POURQUOI UN JOKER SUR LES ARGUMENTS EST ACCEPTABLE ICI
+#
+# `ops-logs *` autorise n'importe quel argument — et c'est assumé.
+# La validation des arguments n'a PAS lieu dans sudoers (où elle serait
+# fragile et contournable) mais dans le script lui-même, qui tourne en root
+# et refuse tout ce qui n'est pas dans l'allowlist.
+#
+# La sécurité vient du script, pas de cette ligne. C'est délibéré : filtrer
+# des arguments avec des motifs sudoers est une source connue de contournements.
+#
+# CONDITION DE VALIDITÉ — ops_assert_integrity() la vérifie à chaque appel :
+# ces scripts doivent appartenir à root et n'être modifiables que par root.
+# S'ils étaient modifiables par claude-ops, l'agent réécrirait le script qu'il
+# a le droit d'exécuter en root, et tout ce dispositif ne vaudrait plus rien.
+
+claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-status ""
+claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-logs *
+
+# --- v2 : écriture (à décommenter seulement après validation de la v1) -------
+# claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-restart *

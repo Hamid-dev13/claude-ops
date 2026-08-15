@@ -1,0 +1,4 @@
+# Configuration réelle du serveur — jamais dans le dépôt public.
+# Le dépôt ne contient que des gabarits génériques.
+services.allow.local
+*.local

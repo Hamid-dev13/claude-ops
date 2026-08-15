@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# ops-logs <service> [lignes] — logs d'un conteneur autorisé. Lecture seule.
+#
+# Le nom du service est validé deux fois (forme + allowlist) et la sortie
+# passe par le filtre de redaction avant de quitter le serveur.
+
+source /usr/local/lib/claude-ops/ops-lib.sh
+ops_assert_integrity
+
+usage() {
+  cat >&2 <<'EOF'
+usage: ops-logs <service> [lignes]
+
+  service   nom d'un conteneur listé dans /etc/claude-ops/services.allow
+  lignes    nombre de lignes de fin à afficher (1-2000, défaut 100)
+EOF
+  exit 2
+}
+
+(( $# >= 1 && $# <= 2 )) || usage
+
+service=$(ops_validate_name "$1")
+lines=$(ops_validate_int "${2:-100}" 1 "$OPS_MAX_LINES")
+
+printf '=== logs: %s (%s dernières lignes) ===\n' "$service" "$lines"
+
+# --no-color : évite les séquences ANSI qui pourraient masquer un secret au
+# filtre de redaction en s'insérant au milieu d'une valeur.
+# 2>&1 : docker écrit une partie des logs applicatifs sur stderr.
+docker logs --tail "$lines" --timestamps "$service" 2>&1 \
+  | sed -E 's/\x1b\[[0-9;]*[mGKHF]//g' \
+  | ops_redact
+
+exit 0
