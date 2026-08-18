@@ -19,6 +19,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 readonly OPS_CONF_DIR="${OPS_CONF_DIR:-/etc/claude-ops}"
 readonly OPS_SERVICES_FILE="${OPS_CONF_DIR}/services.allow"
 readonly OPS_MAX_LINES=2000
+readonly OPS_AGENT_USER="${OPS_AGENT_USER:-claude-ops}"
 
 die() {
   printf 'ops: %s\n' "$1" >&2
@@ -110,8 +111,15 @@ ops_redact() {
 # a le droit d'exécuter en root. On refuse de tourner dans ce cas.
 
 ops_assert_integrity() {
-  local target
-  for target in "$OPS_SERVICES_FILE" "${BASH_SOURCE[0]}"; do
+  local target lib_dir
+  lib_dir=$(dirname "${BASH_SOURCE[0]}")
+
+  # Les RÉPERTOIRES comptent autant que les fichiers : le droit d'écrire dans
+  # un répertoire suffit à y remplacer un fichier, quelles que soient les
+  # permissions de ce fichier. Un /usr/local/bin modifiable par un groupe
+  # rendrait tout le reste décoratif.
+  for target in "$OPS_SERVICES_FILE" "${BASH_SOURCE[0]}" \
+                "$OPS_CONF_DIR" "$lib_dir" /usr/local/bin; do
     [[ -e "$target" ]] || die "fichier requis absent : ${target}"
 
     local owner perms
@@ -122,5 +130,31 @@ ops_assert_integrity() {
     # Le dernier chiffre (autres) et celui du groupe ne doivent pas porter le bit d'écriture
     [[ "${perms: -1}" =~ [0-5] ]] || die "SÉCURITÉ : ${target} est modifiable par tous"
     [[ "${perms: -2:1}" =~ [0-5] ]] || die "SÉCURITÉ : ${target} est modifiable par son groupe"
+  done
+
+  ops_warn_if_agent_privileged
+}
+
+# --- Canari : dérive de configuration ----------------------------------------
+#
+# HONNÊTETÉ SUR CE QUE FAIT CETTE FONCTION : elle ne protège rien.
+#
+# Si le compte agent était ajouté au groupe `docker`, il obtiendrait root sans
+# passer par ces wrappers — les avertir ne l'en empêcherait pas. C'est de la
+# DÉTECTION, pas de la prévention : rendre visible une dérive de configuration
+# au moment où quelqu'un s'en sert, plutôt que de la découvrir après coup.
+#
+# Volontairement un avertissement et non un `die` : transformer une dérive de
+# configuration en panne de diagnostic ne protégerait personne, et arriverait
+# précisément pendant un incident.
+
+ops_warn_if_agent_privileged() {
+  local g
+  id "$OPS_AGENT_USER" &>/dev/null || return 0
+  for g in docker sudo adm root; do
+    if id -nG "$OPS_AGENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$g"; then
+      printf 'ops: AVERTISSEMENT — %s appartient au groupe %s. Ces wrappers ne bornent plus rien.\n' \
+        "$OPS_AGENT_USER" "$g" >&2
+    fi
   done
 }

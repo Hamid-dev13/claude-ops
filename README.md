@@ -220,6 +220,21 @@ Une sécurité honnête énonce ce qu'elle ne couvre pas :
 - **Un poste client compromis** compromet la clé de l'agent. On limite ce qu'elle permet et
   on trace ce qu'elle fait — on ne l'empêche pas.
 - **Ce dépôt ne contraint pas l'opérateur humain**, qui garde un accès root légitime.
+- **Le compte agent conserve un accès réseau sortant.** Dès qu'on autorise la lecture, on
+  autorise l'envoi : `ops-logs app 2000 | curl -X POST …` fonctionnerait. La redaction protège
+  le transcript, pas le socket réseau.
+
+  Décision assumée plutôt qu'oubli. La parade existe — `iptables -A OUTPUT -m owner
+  --uid-owner <uid> ! -o lo -j REJECT` — au prix de casser silencieusement toute évolution
+  future du compte. Elle se justifie sur un serveur hébergeant des données de tiers
+  réglementées ; elle est disproportionnée ici.
+
+  Ce qui rend cette limite acceptable n'est pas que l'accès SSH soit restreint : la surface
+  d'exposition n'est pas le port SSH, c'est le contenu lu par l'agent. Les applications sont
+  publiques, donc leurs logs contiennent ce que des inconnus y écrivent. C'est acceptable
+  parce que même entièrement manipulé, l'agent ne dispose que de trois commandes en lecture
+  seule sur une liste fermée de services — le raisonnement de périmètre ne protège pas, la
+  borne sur les pouvoirs si.
 
 ## Statut
 

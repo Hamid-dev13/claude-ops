@@ -11,6 +11,12 @@ ops_assert_integrity
 
 section() { printf '\n=== %s ===\n' "$1"; }
 
+# Comme les autres wrappers : la sortie repasse par le filtre. Rien ici n'est
+# censé porter de secret — mais un tag d'image ou un point de montage peut en
+# contenir, et la cohérence évite d'avoir à se poser la question à chaque ajout
+# de section.
+main() {
+
 section "CONTENEURS"
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' 2>/dev/null \
   || echo "docker indisponible"
@@ -30,5 +36,9 @@ uptime
 
 section "DOCKER — ESPACE"
 docker system df 2>/dev/null || true
+
+}
+
+main | ops_redact
 
 exit 0
