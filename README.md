@@ -173,6 +173,20 @@ L'installateur est **idempotent** (relançable sans risque) et valide la règle 
 `visudo -c` **avant** de l'installer — une erreur de syntaxe dans `/etc/sudoers.d/` casse
 `sudo` pour tous les comptes de la machine, y compris le vôtre.
 
+### Installer les consignes côté agent
+
+`skill/SKILL.md` apprend à l'agent quelles commandes existent, comment lire leurs sorties, et
+surtout **quoi faire face à un refus** : le rapporter, jamais le contourner.
+
+```bash
+mkdir -p ~/.claude/skills/vps-ops
+sed 's/ops-server/<ton-alias-ssh>/g' skill/SKILL.md > ~/.claude/skills/vps-ops/SKILL.md
+```
+
+C'est de la défense en profondeur, pas une barrière : ce fichier vit côté client, du même
+côté que ce dont on se protège (anti-pattern nº 7). Il évite les erreurs de bonne foi et les
+contournements bien intentionnés. Il n'empêche rien — c'est le serveur qui empêche.
+
 ### Choisir l'allowlist
 
 N'y mettre que des services dont les logs sont lisibles sans risque. À exclure par défaut :
@@ -191,6 +205,7 @@ N'y mettre que des services dont les logs sont lisibles sans risque. À exclure 
 | `bin/ops-status` | État du serveur. Aucun argument, donc aucune surface d'attaque |
 | `bin/ops-logs` | Logs d'un conteneur autorisé, secrets filtrés |
 | `bin/ops-inspect` | État, healthcheck, réseau et sockets en écoute — liste blanche de champs |
+| `skill/SKILL.md` | Consignes d'usage côté agent — une aide, **pas** une frontière de sécurité |
 | `sudoers.d/claude-ops` | Règle sudo, commentée ligne par ligne |
 | `docs/threat-model.md` | Ce qu'on protège, contre quoi, et ce qu'on n'protège pas |
 | `docs/anti-patterns.md` | Les fausses bonnes idées, et pourquoi elles échouent |
