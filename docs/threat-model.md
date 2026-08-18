@@ -86,7 +86,9 @@ Chaque règle du dépôt trace vers une menace :
 | Allowlist explicite des services manipulables | M1 — les conteneurs critiques sont hors d'atteinte |
 | Lecture seule par défaut, écriture par exception | M1 — surface d'erreur réduite au strict nécessaire |
 | Journalisation systématique via `sudo` | M4 — reconstitution après incident |
-| Redaction des secrets dans les sorties des wrappers | M3 — le secret ne quitte pas le serveur |
+| Liste blanche de **champs** dans `ops-inspect`, `.Config.Env` exclu | M3 — le secret ne transite jamais, au lieu d'être filtré après coup |
+| Aucun `docker exec` dans les wrappers | M1, M2 — exécuter du code dans un conteneur n'est pas de la lecture |
+| Redaction des secrets dans les sorties des wrappers | M3 — dernier filet, jamais la barrière principale |
 | Déploiements via git → CI, jamais en SSH direct | M1, M2 — toute mutation est revue et réversible |
 
 ## 6. Le test de validité
@@ -99,3 +101,8 @@ Une règle de ce dépôt n'est acceptable que si elle tient face à cette questi
 Un wrapper qui refuse `coolify-db` passe le test : le refus est dans le script, pas dans
 l'agent. Une consigne du type « ne touche jamais à la base » ne le passe pas : c'est une
 politesse, pas un contrôle.
+
+Ce test est nécessaire, pas suffisant. Une protection peut être parfaitement indépendante de
+l'agent et rester mauvaise, si elle se trompe **en laissant passer** plutôt qu'en refusant —
+et sans le signaler. C'est le cas d'un filtre de redaction employé comme barrière : voir
+`anti-patterns.md`, « Les deux tests ».

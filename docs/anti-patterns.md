@@ -142,12 +142,87 @@ jamais en remplacement.
 
 ---
 
-## Le test commun
+## 8. « Je filtre les secrets en sortie »
 
-Chacun de ces anti-patterns échoue à la même question :
+**L'idée :** exposer une commande verbeuse — `docker inspect`, `env`, un dump de config —
+et nettoyer le résultat avec un filtre de redaction avant de le rendre.
+
+**Pourquoi c'est faux :**
+
+Un filtre de redaction reconnaît des **formes** : un préfixe `sk-`, la structure d'un JWT,
+une URI `postgres://user:pass@`. Il ne reconnaît pas un secret — cette notion n'a aucune
+existence syntaxique. `INTERNAL_SIGNING_KEY=a7f3c9e21b` est un secret critique et une chaîne
+parfaitement banale.
+
+Le déséquilibre est structurel : le filtre doit avoir raison **à chaque fois**, une seule
+omission suffit. Et l'échec est silencieux — rien ne signale qu'un secret est passé. On ne
+l'apprend pas, on le subit.
+
+`docker inspect` est le cas d'école : sa sortie contient `.Config.Env`, donc l'intégralité
+des secrets applicatifs du conteneur. L'exposer en comptant sur un filtre, c'est parier tous
+les secrets d'un service sur l'exhaustivité d'une poignée d'expressions régulières.
+
+**À la place :** une liste blanche de champs. `ops-inspect` énumère ce qu'il affiche — état,
+healthcheck, réseau, image, montages — et rien d'autre ne peut sortir. Un champ nouveau ou
+imprévu est invisible par défaut.
+
+La différence tient en une phrase : **filtrer ce qu'on connaît échoue sur ce qu'on n'a pas
+prévu ; n'autoriser que ce qu'on a choisi échoue en refusant.** Le second mode d'échec est le
+seul acceptable.
+
+La redaction garde sa place — en dernier filet, sur des sorties déjà restreintes. Jamais
+comme frontière.
+
+---
+
+## 9. « `docker exec`, c'est juste du diagnostic »
+
+**L'idée :** l'agent a besoin de regarder à l'intérieur d'un conteneur — les ports en écoute,
+un fichier de config, un processus. Un wrapper `ops-exec <service> <commande>`, limité à des
+commandes inoffensives, ferait l'affaire.
+
+**Pourquoi c'est faux :**
+
+`docker exec` est de l'**exécution de code arbitraire** dans un conteneur. L'emballer dans un
+wrapper « lecture seule » ne change pas sa nature, seulement son nom. Et restreindre la
+commande passée ne sauve rien : les binaires réputés inoffensifs sont des langages complets.
+`find` exécute (`-exec`), `awk` lance des processus (`system()`), `tar` écrit où on lui dit.
+
+Plus fondamentalement, ça déplace la frontière au mauvais endroit. Le wrapper devrait alors
+valider une *commande*, pas un *nom de service* — c'est-à-dire résoudre le problème que
+sudoers ne sait déjà pas résoudre (anti-pattern nº 3), une couche plus bas.
+
+**À la place :** demander au noyau, pas au conteneur. Les sockets en écoute d'un conteneur
+sont lisibles dans `/proc/<pid>/net/tcp{,6}` depuis l'hôte : le noyau y expose la table TCP
+de son namespace réseau. C'est une lecture de fichier, aucun processus n'est lancé de l'autre
+côté.
+
+La question utile n'est pas « quelle commande puis-je autoriser ? » mais **« cette
+information existe-t-elle quelque part où la lire ne demande pas d'exécuter quoi que ce
+soit ? »**. Étonnamment souvent, la réponse est oui.
+
+---
+
+## Les deux tests
+
+Les sept premiers anti-patterns échouent tous à la même question :
 
 > Est-ce que la protection tient encore si l'agent a été **entièrement convaincu** de faire
 > le contraire de ce qu'on attend de lui ?
 
 Si la réponse dépend de ce que l'agent *décide*, ce n'est pas de la sécurité.
 Si elle dépend de ce que le serveur *permet*, c'en est.
+
+Les nºˢ 8 et 9 passent ce test — et échouent quand même. Un filtre de redaction s'exécute
+bien côté serveur ; aucune manipulation de l'agent ne le désactive. Il échoue à une question
+différente :
+
+> Quand cette protection se trompe, **est-ce qu'on l'apprend** — et est-ce qu'elle se trompe
+> en refusant, ou en laissant passer ?
+
+Une liste blanche qui rate un cas refuse quelque chose de légitime : on le voit, on l'ajoute.
+Un filtre qui rate un cas laisse fuiter un secret, sans bruit. Même côté serveur, même
+incontournable, ce n'est pas la même chose.
+
+Une règle de ce dépôt doit passer les deux : **ne pas dépendre du jugement de l'agent, et se
+tromper du bon côté.**
