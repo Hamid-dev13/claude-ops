@@ -40,7 +40,7 @@ done
 command -v docker >/dev/null || die "docker introuvable"
 command -v visudo >/dev/null || die "visudo introuvable"
 
-for f in bin/ops-lib.sh bin/ops-status bin/ops-logs sudoers.d/claude-ops; do
+for f in bin/ops-lib.sh bin/ops-status bin/ops-logs bin/ops-inspect sudoers.d/claude-ops; do
   [[ -f "${SRC_DIR}/${f}" ]] || die "fichier source manquant : ${f}"
 done
 
@@ -81,7 +81,7 @@ install -d -m 0755 -o root -g root "$LIB_DIR"
 install -m 0644 -o root -g root "${SRC_DIR}/bin/ops-lib.sh" "${LIB_DIR}/ops-lib.sh"
 ok "${LIB_DIR}/ops-lib.sh"
 
-for script in ops-status ops-logs; do
+for script in ops-status ops-logs ops-inspect; do
   install -m 0755 -o root -g root "${SRC_DIR}/bin/${script}" "${BIN_DIR}/${script}"
   ok "${BIN_DIR}/${script}"
 done

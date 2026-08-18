@@ -57,6 +57,7 @@ Defaults:claude-ops env_reset
 
 claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-status ""
 claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-logs *
+claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-inspect *
 
 # --- v2 : écriture (à décommenter seulement après validation de la v1) -------
 # claude-ops ALL=(root) NOPASSWD: /usr/local/bin/ops-restart *

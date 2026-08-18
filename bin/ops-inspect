@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# ops-inspect <service> — état détaillé d'un conteneur autorisé. Lecture seule.
+#
+# POURQUOI CE SCRIPT N'EXPOSE PAS `docker inspect` TEL QUEL
+#
+# La sortie brute de `docker inspect` contient .Config.Env — c'est-à-dire
+# TOUTES les variables d'environnement du conteneur : URL de base avec mot de
+# passe, clés d'API tierces, secrets applicatifs. La donner à un agent revient
+# à exfiltrer l'intégralité des secrets du service (menace M3).
+#
+# Le filtre de redaction ne suffirait pas ici : il reconnaît des formes
+# courantes, pas un secret arbitraire. Compter dessus pour assainir un dump
+# complet serait exactement l'erreur que ce dépôt cherche à éviter.
+#
+# On applique donc le même principe que pour les services : une LISTE BLANCHE
+# de champs. Chaque gabarit ci-dessous est un littéral fixe du script ; le nom
+# du conteneur n'y est jamais interpolé, il reste un argument séparé.
+#
+# Champs volontairement EXCLUS : .Config.Env, .Config.Cmd, .Config.Entrypoint,
+# .Args, .Config.Labels — tous peuvent porter des secrets.
+
+source /usr/local/lib/claude-ops/ops-lib.sh
+ops_assert_integrity
+
+usage() {
+  cat >&2 <<'EOF'
+usage: ops-inspect <service>
+
+  service   nom d'un conteneur listé dans /etc/claude-ops/services.allow
+
+Affiche état, healthcheck, réseau, sockets en écoute, image et montages.
+Les variables d'environnement ne sont jamais affichées.
+EOF
+  exit 2
+}
+
+(( $# == 1 )) || usage
+service=$(ops_validate_name "$1")
+
+# --- Sockets en écoute -------------------------------------------------------
+#
+# Lecture de /proc/<pid>/net/tcp{,6} depuis l'hôte : le noyau y expose la table
+# TCP du namespace réseau du conteneur. Aucun code n'est exécuté DANS le
+# conteneur — pas de `docker exec`, qui serait de l'exécution arbitraire
+# déguisée en diagnostic.
+#
+# C'est l'information qui distingue « l'app est morte » de « l'app écoute, mais
+# pas sur la pile que le healthcheck interroge » : un service lié à 0.0.0.0
+# n'écoute qu'en IPv4, et un healthcheck visant `localhost` peut résoudre en
+# ::1 puis échouer alors que tout va bien.
+
+decode_v4() {  # 0100007F -> 127.0.0.1 (octets en ordre inverse)
+  local h="$1"
+  printf '%d.%d.%d.%d' \
+    "$((16#${h:6:2}))" "$((16#${h:4:2}))" "$((16#${h:2:2}))" "$((16#${h:0:2}))"
+}
+
+decode_v6() {  # on ne distingue que les cas qui portent une conclusion
+  case "$1" in
+    00000000000000000000000000000000) printf '[::]' ;;
+    00000000000000000000000001000000) printf '[::1]' ;;
+    *)                                printf '[%s]' "$1" ;;
+  esac
+}
+
+listening_sockets() {
+  local pid="$1" file fam line addr port state fields
+  (( pid > 0 )) || { printf '  (conteneur arrêté)\n'; return; }
+
+  local found=0
+  for fam in 4 6; do
+    file="/proc/${pid}/net/tcp"
+    [[ "$fam" == 6 ]] && file+=6
+    [[ -r "$file" ]] || continue
+
+    # IFS local : la lib impose IFS=$'\n\t', qui empêcherait le découpage
+    # des colonnes séparées par des espaces.
+    while IFS=$' \t' read -r -a fields; do
+      [[ "${fields[3]-}" == "0A" ]] || continue   # 0A = LISTEN
+      addr="${fields[1]%%:*}"
+      port=$((16#${fields[1]##*:}))
+      if [[ "$fam" == 4 ]]; then
+        printf '  IPv4  %s:%s\n' "$(decode_v4 "$addr")" "$port"
+      else
+        printf '  IPv6  %s:%s\n' "$(decode_v6 "$addr")" "$port"
+      fi
+      found=1
+    done < <(tail -n +2 "$file")
+  done
+  (( found )) || printf '  (aucun socket en écoute)\n'
+}
+
+# --- Collecte ----------------------------------------------------------------
+
+inspect() { docker inspect --format "$1" "$service"; }
+
+# Toute la sortie repasse par ops_redact. Les champs sélectionnés ne sont pas
+# censés porter de secret — mais un healthcheck peut contenir une URL avec
+# identifiants, et un chemin de montage un nom parlant. Défense en profondeur :
+# le coût est nul, l'oubli serait irréversible.
+main() {
+
+printf '=== inspect: %s ===\n' "$service"
+
+printf '\n--- ÉTAT ---\n'
+inspect '{{.State.Status}}{{if .State.Health}} ({{.State.Health.Status}}){{end}}
+démarré      : {{.State.StartedAt}}
+redémarrages : {{.RestartCount}} (politique: {{.HostConfig.RestartPolicy.Name}})
+code sortie  : {{.State.ExitCode}}   OOM tué: {{.State.OOMKilled}}
+pid hôte     : {{.State.Pid}}' | sed '1s/^/statut       : /'
+
+printf '\n--- HEALTHCHECK ---\n'
+if [[ "$(inspect '{{if .Config.Healthcheck}}oui{{end}}')" == "oui" ]]; then
+  inspect 'commande     : {{json .Config.Healthcheck.Test}}
+intervalle   : {{.Config.Healthcheck.Interval}}   timeout: {{.Config.Healthcheck.Timeout}}   essais: {{.Config.Healthcheck.Retries}}'
+  printf '\n'
+  if [[ "$(inspect '{{if .State.Health}}oui{{end}}')" == "oui" ]]; then
+    inspect 'échecs consécutifs : {{.State.Health.FailingStreak}}'
+    printf '\n3 derniers essais :\n'
+    inspect '{{range .State.Health.Log}}  {{.Start}}  exit={{.ExitCode}}  {{json .Output}}
+{{end}}' | sed '/^[[:space:]]*$/d' | tail -n 3
+  fi
+else
+  printf '(aucun healthcheck configuré)\n'
+fi
+
+printf '\n--- RÉSEAU ---\n'
+printf 'ports exposés :\n'
+inspect '{{range $p, $c := .NetworkSettings.Ports}}  {{$p}} -> {{if $c}}{{range $c}}{{.HostIp}}:{{.HostPort}} {{end}}{{else}}(non publié sur l'"'"'hôte){{end}}
+{{end}}'
+printf 'réseaux :\n'
+inspect '{{range $n, $c := .NetworkSettings.Networks}}  {{$n}}  {{$c.IPAddress}}
+{{end}}'
+printf 'sockets en écoute (namespace du conteneur) :\n'
+listening_sockets "$(inspect '{{.State.Pid}}')"
+
+printf '\n--- IMAGE ---\n'
+inspect 'image        : {{.Config.Image}}
+créé le      : {{.Created}}'
+printf '\n'
+
+printf '\n--- MONTAGES ---\n'
+inspect '{{range .Mounts}}  {{.Type}}  {{.Source}} -> {{.Destination}} ({{if .RW}}rw{{else}}ro{{end}})
+{{end}}'
+
+}
+
+main | ops_redact
+
+exit 0

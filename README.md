@@ -47,6 +47,7 @@ $ ssh agent@serveur sudo -l
 User claude-ops may run the following commands:
     (root) NOPASSWD: /usr/local/bin/ops-status ""
     (root) NOPASSWD: /usr/local/bin/ops-logs *
+    (root) NOPASSWD: /usr/local/bin/ops-inspect *
 ```
 
 Et les tentatives de sortie de ce cadre :
@@ -59,6 +60,42 @@ Et les tentatives de sortie de ce cadre :
 | `sudo bash` | ❌ mot de passe exigé |
 | `ops-logs <service-hors-liste>` | ❌ refusé par l'allowlist |
 
+## Un cas réel
+
+Un conteneur affiché `unhealthy` depuis six jours. Diagnostic mené entièrement depuis le
+compte borné, sans jamais recourir au compte humain.
+
+`ops-logs` ne montre qu'un faux coupable — des erreurs applicatives sans rapport, espacées
+de plusieurs jours. `ops-inspect` donne la réponse :
+
+```
+--- HEALTHCHECK ---
+commande     : ["CMD-SHELL","wget -qO- http://localhost:3000/ || exit 1"]
+échecs consécutifs : 19931
+  ... exit=1  "wget: can't connect to remote host: Connection refused"
+
+--- RÉSEAU ---
+sockets en écoute (namespace du conteneur) :
+  IPv4  0.0.0.0:3000
+```
+
+Le service écoute — mais **uniquement en IPv4**. Dans le conteneur, `localhost` résout vers
+`127.0.0.1` *et* `::1`, et le `wget` de busybox tente l'IPv6 en premier. Le socket n'existe
+pas de ce côté : refus immédiat. L'application était saine depuis le début ; c'est la sonde
+qui était fausse. Correctif : viser `127.0.0.1` au lieu de `localhost`.
+
+Le nombre d'échecs consécutifs est ce qui tranche : rapporté à l'intervalle de 30 s, il
+couvre toute la durée de vie du conteneur. Ce n'était pas une panne survenue le sixième
+jour — ce healthcheck n'avait jamais fonctionné.
+
+**Ce que ce cas a changé dans le dépôt.** Le diagnostic a d'abord été fait à la main, en
+root, parce que la v1 ne le permettait pas. `ops-inspect` est né de ce manque — et il a
+soulevé une question de conception : `docker inspect` renvoie `.Config.Env`, donc
+l'intégralité des secrets du service. Le filtre de redaction n'aurait pas suffi, il
+reconnaît des formes courantes et non un secret arbitraire. Le wrapper applique donc aux
+champs le principe déjà retenu pour les services : une **liste blanche**, pas un filtrage
+a posteriori.
+
 ## Architecture
 
 ```
@@ -67,7 +104,7 @@ Poste client                    Serveur
                                 utilisateur claude-ops
   clé SSH dédiée  ──────────▶   ├── hors des groupes sudo / docker
   (≠ clé humaine)               ├── pas de mot de passe
-                                └── sudo limité à 2 chemins absolus
+                                └── sudo limité à 3 chemins absolus
                                         │
                                         ▼
                                 /usr/local/bin/ops-*   (root:root, 0755)
@@ -153,6 +190,7 @@ N'y mettre que des services dont les logs sont lisibles sans risque. À exclure 
 | `bin/ops-lib.sh` | Validation partagée — **le cœur de la sécurité** |
 | `bin/ops-status` | État du serveur. Aucun argument, donc aucune surface d'attaque |
 | `bin/ops-logs` | Logs d'un conteneur autorisé, secrets filtrés |
+| `bin/ops-inspect` | État, healthcheck, réseau et sockets en écoute — liste blanche de champs |
 | `sudoers.d/claude-ops` | Règle sudo, commentée ligne par ligne |
 | `docs/threat-model.md` | Ce qu'on protège, contre quoi, et ce qu'on n'protège pas |
 | `docs/anti-patterns.md` | Les fausses bonnes idées, et pourquoi elles échouent |
